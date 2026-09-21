@@ -10,10 +10,12 @@ app, in one batch, into a dedicated "Imported from Google Photos" album.
 Personal use only: it's sideloaded onto your own iPhone from Xcode, not an App
 Store app.
 
-**Status: scaffold.** The source is complete and organized, but it has never
-been compiled or run. It was written in a Linux cloud session with no Xcode,
-so the first `xcodegen generate` + build on a Mac will almost certainly surface
-a few compiler nits. See "Where the real work still is" at the bottom.
+**Status: scaffold, partly verified.** The non-UI layers (Picker API client,
+dedup ledger, PhotoKit importer) compile against the macOS SDK and the unit
+tests pass there, and `xcodegen generate` succeeds. The SwiftUI, GoogleSignIn
+and `@Observable` code has still never been compiled for iOS, so the first
+Xcode build may surface a few compiler nits. Nothing has run on a device or
+against Google yet. See "Where the real work still is" at the bottom.
 
 ## What it does (and deliberately doesn't)
 
@@ -120,8 +122,9 @@ In Xcode:
 4. First launch on a free Apple ID: on the phone go to Settings → General →
    VPN & Device Management and trust your developer certificate.
 
-Unit tests (dedup ledger, URL and duration parsing) need no credentials and
-run in the Simulator: Product → Test, or
+Unit tests (dedup ledger, URL and duration parsing, and the Picker API client
+against canned responses via a `URLProtocol` stub) need no credentials and run
+in the Simulator: Product → Test, or
 
 ```bash
 xcodebuild test -scheme GooglePhotosImporter \
@@ -141,7 +144,8 @@ GooglePhotosImport/            (repo root)
 │   └── Secrets.xcconfig.example    copy to Secrets.xcconfig (gitignored)
 ├── GooglePhotosImporter/           app target sources
 │   ├── App/GooglePhotosImporterApp.swift    @main, OAuth redirect hookup
-│   ├── Auth/GooglePhotosAuth.swift          GoogleSignIn-iOS wrapper + AccessTokenProvider
+│   ├── Auth/AccessTokenProvider.swift       token protocol, AuthError, stub for tests
+│   ├── Auth/GooglePhotosAuth.swift          GoogleSignIn-iOS wrapper
 │   ├── Picker/PickerModels.swift            Picker API JSON models
 │   ├── Picker/PickerSessionManager.swift    create / poll / list / delete sessions
 │   ├── Import/ImportedItemStore.swift       dedup ledger (JSON in Application Support)

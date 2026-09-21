@@ -139,16 +139,19 @@ final class ImportViewModel {
 
             phase = .importing(ImportProgress(total: newItems.count, skippedDuplicates: duplicates.count))
             let result = try await importer.importItems(newItems, skippedDuplicates: duplicates.count) { [weak self] progress in
+                // `cancelImport()` already reset the phase; don't overwrite it.
+                guard !Task.isCancelled else { return }
                 self?.phase = .importing(progress)
             }
 
             importedCount = await store.count
-            phase = Task.isCancelled ? .idle : .finished(result)
-        } catch is CancellationError {
-            phase = .idle
-        } catch PickerError.cancelled {
-            phase = .idle
+            if !Task.isCancelled { phase = .finished(result) }
         } catch {
+            // Once cancelled, `cancelImport()` owns `phase` (a new import may
+            // even be running), so whatever the in-flight call threw is moot.
+            if Task.isCancelled { return }
+            if error is CancellationError { phase = .idle; return }
+            if case PickerError.cancelled = error { phase = .idle; return }
             Log.ui.error("Import failed: \(error.localizedDescription, privacy: .public)")
             phase = .failed(error.localizedDescription)
         }

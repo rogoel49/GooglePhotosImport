@@ -1,0 +1,108 @@
+# Builds and tests the app on a GitHub-hosted Mac, then packages an UNSIGNED
+# .ipa for sideloading (Sideloadly / AltStore sign it with your Apple ID at
+# install time). See README → "Build without a Mac that runs Xcode".
+#
+# Optional repository secrets (Settings → Secrets and variables → Actions):
+#   GOOGLE_CLIENT_ID            123...abc.apps.googleusercontent.com
+#   GOOGLE_REVERSED_CLIENT_ID   com.googleusercontent.apps.123...abc
+# Without them the build still succeeds, and the app shows "Setup required".
+name: iOS
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: which xcodegen || brew install xcodegen
+
+      - name: Write Config/Secrets.xcconfig
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_REVERSED_CLIENT_ID: ${{ secrets.GOOGLE_REVERSED_CLIENT_ID }}
+        run: |
+          if [ -n "$GOOGLE_CLIENT_ID" ] && [ -n "$GOOGLE_REVERSED_CLIENT_ID" ]; then
+            {
+              echo "GOOGLE_CLIENT_ID = $GOOGLE_CLIENT_ID"
+              echo "GOOGLE_REVERSED_CLIENT_ID = $GOOGLE_REVERSED_CLIENT_ID"
+            } > Config/Secrets.xcconfig
+            echo "Using Google credentials from repository secrets."
+          else
+            cp Config/Secrets.xcconfig.example Config/Secrets.xcconfig
+            echo "::warning::GOOGLE_CLIENT_ID / GOOGLE_REVERSED_CLIENT_ID secrets are not set; the app will show 'Setup required'."
+          fi
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Pick an iPhone simulator
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          runtimes = json.load(sys.stdin)["devices"]
+          def version(key):
+              return [int(p) for p in key.split("iOS-")[1].split("-")]
+          ios = sorted((k for k in runtimes if "SimRuntime.iOS-" in k), key=version, reverse=True)
+          print(next(d["udid"] for k in ios for d in runtimes[k] if d["name"].startswith("iPhone")))
+          ')
+          echo "SIMULATOR_UDID=$UDID" >> "$GITHUB_ENV"
+
+      - name: Unit tests (Simulator)
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project GooglePhotosImporter.xcodeproj \
+            -scheme GooglePhotosImporter \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
+            -derivedDataPath build/sim \
+            | tee build-test.log | grep -E "error:|warning: unre|Test Case|Test Suite|\*\* TEST|BUILD" || true
+          grep -q "\*\* TEST SUCCEEDED \*\*" build-test.log
+
+      - name: Build for device (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project GooglePhotosImporter.xcodeproj \
+            -scheme GooglePhotosImporter \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath build/device \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            | tee build-device.log | grep -E "error:|\*\* BUILD" || true
+          grep -q "\*\* BUILD SUCCEEDED \*\*" build-device.log
+
+      - name: Package unsigned .ipa
+        run: |
+          mkdir -p Payload
+          cp -R build/device/Build/Products/Release-iphoneos/GooglePhotosImporter.app Payload/
+          zip -qry GooglePhotosImporter-unsigned.ipa Payload
+          ls -lh GooglePhotosImporter-unsigned.ipa
+
+      - name: Upload .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: GooglePhotosImporter-unsigned-ipa
+          path: GooglePhotosImporter-unsigned.ipa
+          retention-days: 30
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: build-*.log
+          if-no-files-found: ignore

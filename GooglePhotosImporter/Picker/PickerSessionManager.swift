@@ -47,16 +47,23 @@ final class PickerSessionManager {
     private let tokenProvider: AccessTokenProvider
     private let urlSession: URLSession
     private let baseURL: URL
+    private let sleep: (TimeInterval) async throws -> Void
     private let decoder = JSONDecoder()
 
+    /// `sleep` is the wait between polls; tests inject a no-op so they don't
+    /// spend real seconds. It must throw `CancellationError` when cancelled.
     init(
         tokenProvider: AccessTokenProvider,
         urlSession: URLSession = .shared,
-        baseURL: URL = AppConfig.pickerAPIBaseURL
+        baseURL: URL = AppConfig.pickerAPIBaseURL,
+        sleep: @escaping (TimeInterval) async throws -> Void = { seconds in
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        }
     ) {
         self.tokenProvider = tokenProvider
         self.urlSession = urlSession
         self.baseURL = baseURL
+        self.sleep = sleep
     }
 
     // MARK: Sessions
@@ -108,7 +115,7 @@ final class PickerSessionManager {
             if Task.isCancelled { throw PickerError.cancelled }
             if Date() >= deadline { throw PickerError.selectionTimedOut }
 
-            try await Task.sleep(for: .seconds(max(1, interval)))
+            try await sleep(max(1, interval))
             current = try await getSession(id: initial.id)
             onPoll?(current)
             Log.picker.debug("Polled session \(current.id, privacy: .public): mediaItemsSet=\(current.hasSelection)")
@@ -168,6 +175,11 @@ final class PickerSessionManager {
         do {
             (data, response) = try await urlSession.data(for: request)
         } catch {
+            // A cancelled Task surfaces here as URLError.cancelled; report it
+            // as a cancellation, not a network failure.
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled {
+                throw PickerError.cancelled
+            }
             throw PickerError.transport(error)
         }
 
