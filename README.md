@@ -43,9 +43,9 @@ What the app does instead:
 
 ## Requirements
 
-- A Mac with **Xcode 15 or newer**. There is no way around this for an iOS
-  app that writes to Photos. Nothing in this project can be built, run or
-  simulated anywhere else.
+- A Mac with **Xcode 15 or newer** to build and debug locally. If yours can't
+  run it, see "Build without a Mac that runs Xcode" below: GitHub Actions
+  builds the app and a sideloading tool installs it.
 - **XcodeGen** (`brew install xcodegen`). The Xcode project file is generated
   from `project.yml` and is gitignored; never hand-edit a `.xcodeproj`.
 - An iPhone running **iOS 17 or newer**, plus an Apple ID for signing.
@@ -134,6 +134,44 @@ xcodebuild test -scheme GooglePhotosImporter \
 Any time you change `project.yml`, run `xcodegen generate` again. Editing
 files inside Xcode is fine; adding or moving files also just needs a re-run of
 `xcodegen generate` since sources are picked up by folder.
+
+## Build without a Mac that runs Xcode
+
+If your Mac can't run Xcode 15+ (old macOS, no disk space), GitHub Actions
+can do the build and a sideloading tool can do the install. Free for a public
+repo.
+
+1. **Add your Google credentials as repository secrets** (Settings → Secrets
+   and variables → Actions), using the two values from "Google Cloud setup":
+   `GOOGLE_CLIENT_ID` and `GOOGLE_REVERSED_CLIENT_ID`. Or from a terminal:
+   ```bash
+   gh secret set GOOGLE_CLIENT_ID
+   gh secret set GOOGLE_REVERSED_CLIENT_ID
+   ```
+   An iOS OAuth client ID is not confidential (it ships inside every copy of
+   the app and there is no client secret), but keeping it out of git matches
+   the rest of this repo.
+2. **Run the workflow.** `.github/workflows/ios.yml` runs on every push, or
+   manually: `gh workflow run iOS`. It generates the project, runs the unit
+   tests in the Simulator, and builds an unsigned device build.
+3. **Download the .ipa**: `gh run download --name GooglePhotosImporter-unsigned-ipa`
+   (or from the run's page → Artifacts).
+4. **Sign and install it** with [Sideloadly](https://sideloadly.io) or
+   [AltStore](https://altstore.io): plug in the iPhone, drop in the .ipa, sign
+   in with your Apple ID. A free Apple ID install expires after 7 days; both
+   tools can refresh it. On first launch, trust the certificate under
+   Settings → General → VPN & Device Management, and enable Developer Mode
+   (Settings → Privacy & Security) if iOS asks.
+
+**Bundle ID caveat.** With a free Apple ID these tools may change the bundle
+ID (for example by appending your team ID). Keep the original if the tool
+lets you; otherwise create the Google OAuth iOS client with the bundle ID the
+app ends up with. Sign-in redirects use the reversed-client-ID URL scheme, so
+that scheme must stay as built.
+
+There is no debugger this way. Failures show on screen, and the app's logs are
+visible in Console.app with the iPhone plugged in (filter by the subsystem
+`com.rohangoel.GooglePhotosImporter`).
 
 ## Project layout
 
