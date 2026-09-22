@@ -197,39 +197,47 @@ final class PhotoImporter {
             options.uniformTypeIdentifier = type.identifier
         }
 
-        var placeholderID: String?
+        let placeholderID = PlaceholderIDBox()
         do {
             try await library.performChanges {
                 let creation = PHAssetCreationRequest.forAsset()
                 creation.addResource(with: resourceType, fileURL: fileURL, options: options)
                 if let placeholder = creation.placeholderForCreatedAsset {
-                    placeholderID = placeholder.localIdentifier
+                    placeholderID.value = placeholder.localIdentifier
                     PHAssetCollectionChangeRequest(for: album)?.addAssets([placeholder] as NSArray)
                 }
             }
         } catch {
             throw ImportError.saveFailed(itemID: item.id, underlying: error)
         }
-        return placeholderID
+        return placeholderID.value
     }
 
     /// Finds or creates the dedicated destination album.
     private func ensureAlbum() async throws -> PHAssetCollection {
         if let existing = fetchAlbum() { return existing }
 
-        var placeholderID: String?
+        let placeholderBox = PlaceholderIDBox()
         try await library.performChanges { [albumTitle = self.albumTitle] in
             let request = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: albumTitle)
-            placeholderID = request.placeholderForCreatedAssetCollection.localIdentifier
+            placeholderBox.value = request.placeholderForCreatedAssetCollection.localIdentifier
         }
 
-        if let placeholderID,
+        if let placeholderID = placeholderBox.value,
            let created = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [placeholderID], options: nil).firstObject {
             Log.importer.info("Created album \"\(self.albumTitle, privacy: .public)\"")
             return created
         }
         if let existing = fetchAlbum() { return existing }
         throw ImportError.albumCreationFailed
+    }
+
+    /// Carries a placeholder's local identifier out of a `performChanges`
+    /// block. The block is `@Sendable` in newer SDKs, so it can't mutate a
+    /// captured `var`. Written once inside the block, read only after
+    /// `performChanges` returns, so no locking is needed.
+    private final class PlaceholderIDBox: @unchecked Sendable {
+        var value: String?
     }
 
     private func fetchAlbum() -> PHAssetCollection? {

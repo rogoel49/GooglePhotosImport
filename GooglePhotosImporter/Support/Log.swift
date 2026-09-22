@@ -1,3 +1,4 @@
+import Foundation
 import OSLog
 
 /// Central loggers. View them in Console.app / Xcode's console filtered by the
